@@ -6,38 +6,28 @@ LOG = []
 
 
 class Factory:
+    """Factory get bombs and creates minions workflow on conveyors
     """
-    Factory which is set up using parameters:
-    1. "inspect" - number of minions, which should test the bomb
-    2. "number_minions" - number of minions at the factory
-    3. "filename" - file where stored the bombs
-    Also, factory contains method:
-    1. "create_minions"
-    2. "get_bombs" - reads the bombs from the 'filename'
-    3. "run_conveyor" -  starts circular conveyor
-    4. "generate_reports" - generate qa report and motivation report
-    5. "write_xlsx" - writes a reports and log in xlsx file
-    """
-    MOTIVATION_REPORT = {}
-    QA_REPORT = {}
-    PERCENTAGE_CORRECT = 0
-    BOMBS = []
-    MINIONS = []
 
     def __init__(self, inspect, number_minions, filename):
+        """ Factory is set up using parameters:
+        1. "inspect" - number of minions, which should test the bomb
+        2. "number_minions" - number of minions at the factory
+        3. "filename" - file where stored the bombs
+        """
         self.inspections = inspect
         self.number_minions = number_minions
-        self.filename = filename
+        self.bombs = []
+        self.minions = []
         self._create_minions(number_minions)
         self._get_bombs(filename)
 
     def _create_minions(self, number_minions):
-        self.MINIONS = [Minion(id) for id in range(1, number_minions + 1)]
-        self.MOTIVATION_REPORT = {id: [0, 0, 0] for id in
-                                  range(1, number_minions + 1)}
+        self.minions = [Minion(id) for id in
+                        range(1, number_minions + 1)]
 
     def _get_bombs(self, filename):
-        """Reads the bombs from the 'filename'"""
+        """Get the bombs from the file"""
         wb = load_workbook(filename=filename)
         sheet_range = wb['Bombs']
         row = 2
@@ -46,59 +36,70 @@ class Factory:
             is_broken = sheet_range['B{0}'.format(row)].value
             if not id:
                 break
-            self.BOMBS.append(Bomb(id, is_broken))
+            self.bombs.append(Bomb(id, is_broken))
             row += 1
 
     def run_conveyor(self):
         """ Starts circular conveyor """
         count = 0
-        while count <= len(self.BOMBS) / self.number_minions:
-            tape = self.BOMBS[
+        while count <= len(self.bombs) / self.number_minions:
+            tape = self.bombs[
                    self.number_minions * count:self.number_minions * (
                        count + 1)]
             for check in xrange(self.inspections):
                 for i in xrange(len(tape)):
-                    self.MINIONS[i - check].check_bomb(tape[i])
+                    self.minions[i - check].check_bomb(tape[i])
             count += 1
+
+
+class ReportsManager:
+    def __init__(self, filename, factory):
+        self.filename = filename
+        self.factory = factory
+        self.motivation_report = {id: [0, 0, 0] for id in
+                                  range(1, factory.number_minions + 1)}
+        self.qa_report = {}
+        self.percentage_correct = 0
 
     def generate_reports(self):
         """ Generate qa report and motivation report"""
         correctly = 0
-        for bomb in self.BOMBS:
+        for bomb in self.factory.bombs:
             # generate qa report
             answers = bomb.minions_stickers.values()
             yes = answers.count('yes')
             quorum = yes and float(
-                yes) / self.inspections > 0.5 and 'yes' or 'no'
+                yes) / self.factory.inspections > 0.5 and 'yes' or 'no'
             # The code below count number of bomb, which broken but minions
             # quorum answered 'yes'
             # if quorum == 'yes' and bomb.is_broken:
             #     count += 1
             if quorum == 'yes':
-                self.QA_REPORT[bomb.id] = 0
+                self.qa_report[bomb.id] = 0
                 if not bomb.is_broken:
                     correctly += 1
             else:
-                self.QA_REPORT[bomb.id] = 1
+                self.qa_report[bomb.id] = 1
                 if bomb.is_broken:
                     correctly += 1
             # generate motivation report
             for id_minion, answer in bomb.minions_stickers.iteritems():
                 if answer is None:
-                    self.MOTIVATION_REPORT[id_minion][2] += 1
+                    self.motivation_report[id_minion][2] += 1
                     continue
                 if answer == quorum:
-                    self.MOTIVATION_REPORT[id_minion][0] += 1
+                    self.motivation_report[id_minion][0] += 1
                 else:
-                    self.MOTIVATION_REPORT[id_minion][1] += 1
+                    self.motivation_report[id_minion][1] += 1
 
-        self.PERCENTAGE_CORRECT = float(correctly) / len(self.BOMBS) * 100
+        self.percentage_correct = float(correctly) / len(
+            self.factory.bombs) * 100
 
     def write_xlsx(self):
         """ Writes a reports and log in xlsx file"""
         wb = Workbook()
 
-        # writing LOG
+        # write Log
         ws1 = wb.active
         ws1.title = 'Log'
         column_name = ['minion_id', 'bomb_id', 'answer']
@@ -110,51 +111,40 @@ class Factory:
                     continue
                 ws1.cell(column=col, row=row, value=LOG[row - 2][col - 1])
 
-        # writing reports
-        def write_reports(ws, report, column_name):
-            """Function writing reports"""
-            for row in range(0, len(report)+1):
-                for col in range(1, len(column_name)+1):
-                    if row == 0:
-                        ws.cell(column=col, row=row+1, value=column_name[col - 1])
-                        continue
-                    if col == 1:
-                        ws.cell(column=col, row=row+1, value=row)
-                        continue
-                    ws.cell(column=col, row=row+1,
-                             value=report[row][col - 2])
-        # writing motivation report
+        # write motivation report
         ws2 = wb.create_sheet(title='Motivation Report')
         column_name = ['minion_id', 'banans_cnt', 'flogging_cnt',
                        'bombs_skipped']
-        for row in range(0, len(self.MOTIVATION_REPORT)+1):
-                for col in range(1, len(column_name)+1):
-                    if row == 0:
-                        ws2.cell(column=col, row=row+1, value=column_name[col - 1])
-                        continue
-                    if col == 1:
-                        ws2.cell(column=col, row=row+1, value=row)
-                        continue
-                    ws2.cell(column=col, row=row+1,
-                             value=self.MOTIVATION_REPORT[row][col - 2])
-        # writing qa report
+        for row in range(0, len(self.motivation_report) + 1):
+            for col in range(1, len(column_name) + 1):
+                if row == 0:
+                    ws2.cell(column=col, row=row + 1,
+                             value=column_name[col - 1])
+                    continue
+                if col == 1:
+                    ws2.cell(column=col, row=row + 1, value=row)
+                    continue
+                ws2.cell(column=col, row=row + 1,
+                         value=self.motivation_report[row][col - 2])
+        # write qa report
         ws3 = wb.create_sheet(title='QA Report')
         column_name = ['bomb_id', 'is_broken']
-        for row in range(0, len(self.QA_REPORT)+1):
-                for col in range(1, len(column_name)+1):
-                    if row == 0:
-                        ws3.cell(column=col, row=row+1, value=column_name[col - 1])
-                        continue
-                    if col == 1:
-                        ws3.cell(column=col, row=row+1, value=row)
-                        continue
-                    ws3.cell(column=col, row=row+1,
-                             value=self.QA_REPORT[row])
+        for row in range(0, len(self.qa_report) + 1):
+            for col in range(1, len(column_name) + 1):
+                if row == 0:
+                    ws3.cell(column=col, row=row + 1,
+                             value=column_name[col - 1])
+                    continue
+                if col == 1:
+                    ws3.cell(column=col, row=row + 1, value=row)
+                    continue
+                ws3.cell(column=col, row=row + 1,
+                         value=self.qa_report[row])
         ws3.cell(column=3, row=1, value="% of correct")
-        ws3.cell(column=3, row=2, value=self.PERCENTAGE_CORRECT)
+        ws3.cell(column=3, row=2, value=self.percentage_correct)
 
         # save file
-        wb.save(filename='report.xlsx')
+        wb.save(filename=self.filename)
 
 
 class Bomb:
@@ -213,6 +203,6 @@ def generate_decision(answers, weights):
 if __name__ == '__main__':
     factory = Factory(10, 102, 'bombs.xlsx')
     factory.run_conveyor()
-    factory.generate_reports()
-    print LOG[300:310]
-    factory.write_xlsx()
+    reports_manager = ReportsManager('report.xlsx', factory)
+    reports_manager.generate_reports()
+    reports_manager.write_xlsx()
