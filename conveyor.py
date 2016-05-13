@@ -1,7 +1,6 @@
 from random import random
-
-from manager import WorkbookManager
-
+from openpyxl import load_workbook, Workbook
+import argparse
 
 class Bomb:
     """Model describe bomb with minions stickers."""
@@ -15,7 +14,8 @@ class Bomb:
 class Conveyor:
     """Conveyor get bombs and creates minions workflow on conveyors"""
 
-    def __init__(self, number_minions, minions_qualific, inspect, bombs_path):
+    def __init__(self, number_minions, minions_qualific, inspect, filename,
+                 sheet):
         """Initialize a Conveyor instance.
 
         Parameters:
@@ -23,18 +23,19 @@ class Conveyor:
         minions_qualific -- the probability of a correct answer minions.
                             Is defined as a tuple = (right, wrong, skip)
         inspect -- number of minions, which should test the bomb
-        bombs_path -- path to the sheet, where stored the bombs.
-                        Is defined as a tuple = (filename, sheet)
+        filename -- xlsx file with bombs
+        sheet -- sheet, where stored the bombs.
         """
         self.number_minions = number_minions
         self.weights = minions_qualific
         self.inspect = inspect
-        self.bombs_path = bombs_path
-        self.wb_manager = WorkbookManager(*bombs_path)
+        self.filename = filename
+        self.sheet = sheet
+        self.wb_manager = WorkbookManager(filename, sheet)
         self.bombs = [Bomb(*record) for record in
                       self.wb_manager.get_bombs_data()]
-        self.minions = [Minion(minions_qualific, self.wb_manager) for _ in
-                        range(number_minions)]
+        self.minions = [Minion(id, minions_qualific, self.wb_manager) for id in
+                        range(1, number_minions+1)]
         self.motivation_report = []
         self.qa_report = []
         self.percentage_correct = 0
@@ -44,7 +45,7 @@ class Conveyor:
         count = 0
         while count <= len(self.bombs) / self.number_minions:
             from_box = self.number_minions * count
-            to_box = self.number_minions * (count+1)
+            to_box = self.number_minions * (count + 1)
             tape = self.bombs[from_box:to_box]
             for turn in xrange(self.inspect):
                 for pos in xrange(len(tape)):
@@ -99,7 +100,7 @@ class Conveyor:
         self.wb_manager.write_xslx('% correct', column_names, data)
 
         # save in output file
-        filename = self.bombs_path[0]
+        filename = self.filename
         ind = filename.find('.')
         output_file = filename[:ind] + '_output' + filename[ind:]
         self.wb_manager.wb.save(filename=output_file)
@@ -112,18 +113,16 @@ class Minion:
     """
 
     ANSWERS = (True, False, None)
-    id = 0
 
-    def __init__(self, weights, wb_manager):
+    def __init__(self, id, weights, wb_manager):
         """Initialize a Conveyor instance.
 
         Parameters:
         "weights" - show probability ANSWERS
         """
-        Minion.id += 1
-        self.id = Minion.id
+        self.id = id
         self.weights = weights
-        self.wb_manager =wb_manager
+        self.wb_manager = wb_manager
         self.bananas = 0
         self.floggings = 0
         self.skips = 0
@@ -157,8 +156,81 @@ class Minion:
         return element
 
 
+class WorkbookManager:
+    def __init__(self, filename, sheet):
+        self.wb = load_workbook(filename)
+        self.bombs_sheet = sheet
+        self.wb_output = Workbook(filename)
+        self.log_sheet = self.wb.create_sheet(title='Log')
+        self.row_cursor = 1
+
+    def get_bombs_data(self):
+        bombs_sheet = self.wb.get_sheet_by_name(self.bombs_sheet)
+        for row in bombs_sheet.rows[1:]:
+            yield [cell.value for cell in row]
+
+    def write_xslx(self, sheet_name, column_names, data):
+        title_row = 1
+        ws = self.wb.create_sheet(title=sheet_name)
+        for col, col_name in enumerate(column_names, 1):
+            ws.cell(column=col, row=title_row, value=col_name)
+
+        for row, record in enumerate(data, title_row + 1):
+            for col, value in enumerate(record, 1):
+                ws.cell(column=col, row=row, value=value)
+
+    def minions_log(self, record):
+        """
+        Write minion bomb check data to the file.
+        """
+        column_names = ['minion_id', 'bomb_id', 'answer']
+        if self.row_cursor == 1:
+            for col, col_name in enumerate(column_names, 1):
+                self.log_sheet.cell(column=col, row=self.row_cursor, value=col_name)
+            self.row_cursor += 1
+        for col, value in enumerate(record, 1):
+            self.log_sheet.cell(row=self.row_cursor, column=col, value=value)
+        self.row_cursor += 1
+
+
 if __name__ == '__main__':
-    conveyor = Conveyor(102, (6, 3, 1), 10, ('bombs.xlsx', 'Bombs'))
+    # parsing arguments
+    import sys
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-m', action='store', dest='minions',
+                        help='Number of minions on conveyor')
+    parser.add_argument('-c', action='store', dest='correct', default=60,
+                        help='The probability of a correct answer. Defult=60')
+    parser.add_argument('-s', action='store', dest='skip', default=10,
+                        help='The probability of a skip')
+    parser.add_argument('-i', action='store', dest='inspect',
+                        help='Number of inspections each bomb')
+    parser.add_argument('-file', action='store', dest='file',
+                        default='bombs.xlsx', help='Xlsx file with bombs')
+    parser.add_argument('-sheet', action='store', dest='sheet', default='Bombs',
+                        help='Shee with bombs in xlsx file')
+    args = parser.parse_args()
+
+    correct = float(args.correct) / 10
+    skip = float(args.skip) / 10
+    if correct + skip > 100:
+        sys.exit('The sum of probabilities of  correct and skip must be < 100')
+    if not args.minions or not args.inspect:
+        sys.exit('Number of minions and inspections is required')
+    minions = int(args.minions)
+    inspect = int(args.inspect)
+    if minions < inspect:
+        sys.exit('Number of inspections can\'t be more then minions')
+    qualific = (correct, 10 - correct - skip, skip)
+
+    # program execution
+    conveyor = Conveyor(
+        minions,
+        qualific,
+        inspect,
+        args.file,
+        args.sheet
+    )
     conveyor.run_conveyor()
     conveyor.generate_reports_and_salary()
     conveyor.write_reports()
